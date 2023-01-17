@@ -1,0 +1,224 @@
+---
+title: "Insurance cost data analysis"
+author: "Emma King"
+date: "2023-01-15"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data
+
+The data used for this analysis is an open-source patient level data set. It is simulated data sourced from the textbook [Machine Learning with R by Brett Lantz](https://supermariogiacomazzo.github.io/STOR538_WEBSITE/Textbooks%20in%20R/Machine%20Learning%20with%20R.pdf). Given that the data is simulated, we cannot actually apply these findings to real world decisions. However, the data was simulated based on demographic statistics from the U.S. Census Bureau which roughly reflect real-world conditions.
+
+Below is a peak at what the data looks like.
+
+```{r, message = FALSE}
+library(data.table)
+library(tidyverse)
+library(knitr)
+```
+
+```{r}
+dt = fread("C:/Users/Alexei/Desktop/Stuff/emma/data/insurance_cost/insurance.csv")
+head(dt) %>% kable()
+```
+
+This data contains yearly medical insurance costs for 1338 patients, along with 6 variables describing patients.
+
+## Goal
+
+In this analysis, I am going to use R to determine what factors drive high insurance costs.
+
+## Data analysis
+
+### Missing data
+
+```{r}
+for (col in names(dt)) {
+  print(col)
+  print(dt[is.null(get(col)) | is.na(get(col)) | get(col) == "", .N])
+}
+```
+Great news! We do not have any missing data. 
+
+### Understanding `charges`
+
+```{r}
+ggplot(dt, aes(x = charges)) +
+  geom_density(fill = "#69b3a2", alpha = 0.7)
+```
+
+The majority of charges are under $20K, with a smaller distribution around $40K and a significant tail of higher charges that seem to be outliers. To understand what drives higher insurance charges, I will dive deeper into the second hump in the distribution later.
+
+```{r}
+dt[order(-charges)][1:10] %>% kable()
+```
+
+Every single one of the top 10 outliers is obese and a smoker with BMI > 30. Age and children do not seem to be drivers here. 70% are located in the southern region of the USA.
+
+### Understanding `age`
+
+```{r}
+ggplot(dt, aes(x = age)) +
+  geom_density(fill = "#69b3a2", alpha = 0.7)
+```
+```{r}
+summary(dt$age)
+```
+The average age is 39. There is a broad age range that is well represented within the data - only adults aged 18 - 64 are included. There is a swift drop at about age 60 which could indicate retirement and a change of insurance to medicare.
+
+```{r}
+ggplot(dt, aes(x = age, y = charges)) +
+  geom_point()
+```
+
+The data suggests that cost increases with age. There appear to be 3 bands in the data. Later I will focus on factors that drive the upper two bands as they clearly drive up healthcare costs.
+
+### Understanding `bmi`
+
+```{r}
+ggplot(dt, aes(x = bmi)) +
+  geom_density(fill = "#69b3a2", alpha = 0.7) 
+```
+```{r}
+dt[order(-bmi)][1:10] %>% kable()
+```
+
+BMI is fairly normally distributed with the peak around 30, with a tail of high BMI values. A BMI over 30 is considered obese. The top 10 highest BMI patients have high charges, the highest of which come from smokers in the southern regions. The highest BMI patient seems to be an outlier due to being one of the youngest ages in the data and having one of the lowest charges. 
+
+
+```{r}
+ggplot(dt, aes(x = bmi, y = charges)) +
+  geom_point() 
+```
+
+As BMI increases there is a trend with cost increasing. After a BMI > 30 there is a cluster of high charges. Later, I will focus on what other factors could be contributing to a higher cost for some obese patients. 
+
+### Understanding `smoker`
+
+```{r}
+dt[ , .(.N, avg_cost = mean(charges)), by = smoker] %>% kable()
+```
+
+Majority of the patients are not smokers, but the average cost for smokers is significantly more compared to nonsmokers. 
+
+```{r}
+ggplot(dt, aes(x = smoker, y = charges, fill = smoker)) +
+  geom_violin()
+```
+
+The plot shows that there is an increase in cost for smokers. Within smokers there are two distributions like we saw above, around $20K and $40K. Clearly smoking is a factor in determining increased insurance cost. The distribution for smoking is bimodal, this could indicate that there may be another factor that could be contributing to smokers having a higher cost. 
+
+### Understanding `children`
+
+```{r}
+dt[ , children := factor(children)]
+dt[ , .(.N, avg_cost = mean(charges)), by = children][order(children)] %>% kable()
+```
+
+The mode of the patient population do not have children, but the majority have 1-3 children. 
+
+```{r}
+dt[sex == "male", .N, by = children][order(children)] %>% kable()
+```
+
+By filtering for males we can determine that children are counted as dependents.  
+
+```{r}
+ggplot(dt, aes(x = children, y = charges, fill = children)) +
+  geom_violin()
+
+```
+
+There is a slight upward trend in cost with an increase in dependents. 
+
+```{r}
+ggplot(dt, aes(x = children, y = charges, fill = sex)) +
+  geom_violin()
+```
+
+Is childbirth a driver in higher cost for women?  Overall there seems to be a negligible additional cost for women for subsequent children. This indicates that childbirth may not be a huge driver to increasing insurance cost for females.
+ 
+### Understanding `sex`
+
+```{r}
+dt[ , .(.N, avg_cost = mean(charges)), by = sex] %>% kable()
+```
+```{r}
+ggplot(dt, aes(x = sex, y = charges, fill = sex)) +
+  geom_violin() 
+```
+
+Males have a slight increase in cost but overall sex does not seem to be a driving factor for increase cost. 
+
+### Understanding `region`
+
+```{r}
+dt[ , .(totalcount =.N, avg_cost = mean(charges)), by = region] %>% kable()
+```
+
+All regions are fairly represented in the data set. On average the Southeast has a slight increase in cost. 
+
+```{r}
+ggplot(dt, aes(x = region, y = charges, fill = region)) +
+  geom_violin()
+```
+
+There is a slight increase in cost for Southern regions.
+
+## Diving deeper
+
+Age, BMI, and smoking seem to be the main factors driving up cost based on the above analysis. Here we will take a deeper look into how these variables together impact cost.
+
+### Deeper dive: `age and smoking`
+
+```{r}
+ggplot(dt, aes(x= age, y = charges, color = smoker)) +
+  geom_point()
+```
+
+All of the higher costs in the upper band are associated with smokers. The middle band seems to be a mix and the lower band includes only nonsmokers. As age increases cost follows. There may be another variable that is contributing to the higher cost band. Let's now see how obesity and age impact charges. 
+
+### Deeper dive: `age and obesity`
+
+```{r}
+dt[ , obese := bmi >= 30]
+ggplot(dt, aes(x = age, y = charges, color = obese)) +
+  geom_point()
+```
+
+For obesity, as age increases so does cost. The upper band is almost entirely comprised of obese patients. Although obesity is shown to increase cost it is not as definitive of an indicator as smoking because the lowest band is a mix of obese and not obese patients. Smoking seems to be the primary driver to increase cost. 
+
+### Deeper dive: `smoking and obesity`
+```{r}
+ggplot(dt, aes(x = smoker, y = charges, fill = obese)) +
+  geom_violin()
+```
+
+Non-smokers have similar costs whether they are obese or not. Smokers have much higher costs than non-smokers in general, with obese smokers having by far the highest costs. Thus, obesity seems to be an important factor only for smokers.
+
+As a sensitivity analysis, let's be less strict on the BMI group and see how the data changes when we include overweight patients (BMI >= 25.0).
+
+```{r}  
+dt[ , overweight := bmi > 25.0]
+ggplot(dt, aes(x = smoker, y = charges, fill = overweight)) +
+  geom_violin()
+```
+
+The story does not change here - patients who smoke and are overweight drive up cost. However, there is more overlap in cost between overweight and non-overweight patients. Obesity partitions the data with less overlap.
+
+## Conclusion
+
+```{r}
+dt[smoker == "no", category := "Not smoker"]
+dt[smoker == "yes" & obese == TRUE, category := "Smoker and obese"]
+dt[smoker == "yes" & obese == FALSE, category := "Smoker and not obese"]
+
+ggplot(dt, aes(x = age, y = charges, color = category)) +
+  geom_point()
+```
+
+The analysis illuminates that the first order effect on cost is smoking and the second order effect is obesity. Smoking and obesity combined correlates to the highest insurance costs. As age increases so does cost across all categories at a fairly similar rate. 
